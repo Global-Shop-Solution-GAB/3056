@@ -1,0 +1,197 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.UDT.FileData.Define("VendNo",String)
+Variable.UDT.FileData.Define("InvNo",String)
+Variable.UDT.FileData.Define("InvDte",String)
+Variable.UDT.FileData.Define("Message",String)
+Variable.UDT.FileData.Define("Account",String)
+Variable.UDT.FileData.Define("ProfitCnter",String)
+Variable.UDT.FileData.Define("ExpCntr",String)
+Variable.UDT.FileData.Define("InternalOrd",String)
+Variable.UDT.FileData.Define("ExpAmt",String)
+Variable.uGlobal.uFileData.Declare("FileData")
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+
+F.ODBC.Connection!ConA.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+F.Intrinsic.Control.CallSub(Findfile)
+F.Intrinsic.Control.CallSub(Addldata,"FILE",V.Args.FILE)
+F.Intrinsic.Control.CallSub(Createxls,"FILE",V.Args.FILE)
+F.Intrinsic.Control.CallSub(Unload)
+
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+
+F.ODBC.Connection!ConA.Close
+F.Intrinsic.Control.End
+
+Program.Sub.Unload.End
+
+Program.Sub.findFile.Start
+
+' file will be CKmmdd##.txt, in the global/files
+' can be more than a single file in a day, look for hight seq ##
+
+V.Local.sFile.Declare(String)
+V.Local.sTemp.Declare(String)
+V.Local.sDate.Declare(String)
+V.Local.sSeq.Declare(String)
+V.Local.iSeq.Declare(Long)
+V.Local.bExists.Declare(Boolean)
+V.Local.sFields.Declare(String)
+V.Local.sMsg.Declare(String)
+
+' get current month and day
+F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYYYY",V.Local.sDate)
+F.Intrinsic.String.Left(V.Local.sDate,4,V.Local.sDate)
+
+' get default 01 file.  If not found, alert user and end
+F.Intrinsic.String.Concat(V.Caller.FilesDir,"\CK",V.Local.sDate,"01.txt",V.Local.sFile)
+	F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists,=,False)
+		F.Intrinsic.String.Concat(V.Local.sFile," not found.  Please complete check run.",V.Local.sMsg)
+		F.Intrinsic.UI.Msgbox(V.Local.sMsg)
+		F.Intrinsic.Control.CallSub(Unload)
+	F.Intrinsic.Control.EndIf
+
+' look for highest file seq for the day
+F.Intrinsic.Control.Do
+	F.Intrinsic.Math.Add(V.Local.iSeq,1,V.Local.iSeq)
+	F.Intrinsic.String.LPad(V.Local.iSeq,"0",2,V.Local.sSeq)
+	F.Intrinsic.String.Concat(V.Caller.FilesDir,"\CK",V.Local.sDate,V.Local.sSeq,".txt",V.Local.sTemp)
+	F.Intrinsic.File.Exists(V.Local.sTemp,V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists,=,True)
+		V.Local.sFile.Set(V.Local.sTemp)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.ExitDo
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Loop
+
+F.Intrinsic.Variable.AddRV("FILE",V.Local.sFile)
+
+Program.Sub.findFile.End
+
+Program.Sub.addlData.Start
+
+V.Local.sFileData.Declare(String)
+V.Local.sFields.Declare(String)
+V.Local.iFor.Declare(Long)
+V.Local.sSel.Declare(String)
+V.Local.sRet.Declare(String)
+V.Local.sSIEAPUPL.declare(String)
+V.Local.bExists.Declare(Boolean)
+
+' be sure there is something on the file
+F.Intrinsic.File.File2String(V.Args.FILE,V.Local.sFileData)
+F.Intrinsic.Control.If(V.Local.sFileData.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("No data to load.")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.String.Split(V.Local.sFileData,V.Ambient.NewLine,V.Local.sFileData)
+V.uGlobal.uFileData.Redim(V.Local.sFileData.LBound,V.Local.sFileData.UBound)
+
+' the vendor number on the file, will not be the vendor in GSS.
+' look for the GSS vendor on the GCG_3056_SAP_Vendor table
+' have to re-order information, might as well do it all in this one loop
+F.Intrinsic.Control.For(V.Local.iFor,1,V.Local.sFileData.UBound,1)
+	F.Intrinsic.Control.If(V.Local.sFileData(v.Local.iFor).Trim,<>,"")
+		F.Intrinsic.String.Split(V.Local.sFileData(v.Local.iFor),V.Ambient.Tab,V.Local.sFields)
+		F.Intrinsic.String.Concat("select SAP_Vendor from GCG_3056_SAP_Vendor where GSS_Vendor ='",V.Local.sFields(11).Trim,"' ",V.Local.sSel)
+		f.ODBC.Connection!ConA.ExecuteAndReturn(v.Local.sSel,v.Local.sRet)
+
+		' always check for NULL and invalid additional records, but then replace the vendor with the SAP vendor, if found
+		F.Intrinsic.Control.If(V.Local.sRet.Trim,<>,"")
+			F.Intrinsic.String.Split(V.Local.sRet,"#$#",V.Local.sRet)
+			F.Intrinsic.String.Split(V.Local.sRet(0),"*!*",V.Local.sRet)
+			V.uGlobal.uFileData(v.Local.iFor)!VendNo.Set(V.Local.sRet(0))
+		F.Intrinsic.Control.Else
+			V.uGlobal.uFileData(v.Local.iFor)!VendNo.Set(V.Local.sFields(11).Trim)
+		F.Intrinsic.Control.EndIf
+
+		V.uGlobal.uFileData(v.Local.iFor)!InvNo.Set(V.Local.sFields(12).Trim)
+		V.uGlobal.uFileData(v.Local.iFor)!InvDte.Set(V.Local.sFields(21))
+		V.uGlobal.uFileData(v.Local.iFor)!ExpAmt.Set(V.Local.sFields(19))
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iFor)
+
+' might be a blank line for a return.  don't need it
+F.Intrinsic.Variable.UDTMultiFlag(V.uGlobal.uFileData!VendNo,"")
+F.Intrinsic.Variable.UDTDeleteFlagged(V.uGlobal.uFileData)
+
+' some static values will be on a separate txt
+F.Intrinsic.String.Concat(V.Caller.FilesDir,"\SIEAPUPL",V.Local.sSIEAPUPL)
+F.Intrinsic.File.Exists(V.Local.sSIEAPUPL,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,False)
+	F.Intrinsic.UI.Msgbox("SIEAPUPL.txt not found.  Please contact Global Shop")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.Else
+	F.Intrinsic.File.File2String(V.Local.sSIEAPUPL,V.Local.sSIEAPUPL)
+	F.Intrinsic.String.Split(V.Local.sSIEAPUPL,V.Ambient.NewLine,V.Local.sSIEAPUPL)
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.For(V.Local.iFor,V.Local.sSIEAPUPL.LBound,V.Local.sSIEAPUPL.UBound,1)
+	F.Intrinsic.String.Split(V.Local.sSIEAPUPL(v.Local.iFor),":",V.Local.sRet)
+	F.Intrinsic.Control.If(V.Local.sRet(0).Trim,=,"REMIT MESSAGE")
+		F.Intrinsic.Variable.UDTSetMemberValue(V.uGlobal.uFileData!Message,V.Local.sRet(1).Trim)
+
+	F.Intrinsic.Control.ElseIf(V.Local.sRet(0).Trim,=,"EXPENSE ACCOUNT")
+		F.Intrinsic.Variable.UDTSetMemberValue(V.uGlobal.uFileData!Account,V.Local.sRet(1).Trim)
+
+	F.Intrinsic.Control.ElseIf(V.Local.sRet(0).Trim,=,"PROFIT CENTER")
+		F.Intrinsic.Variable.UDTSetMemberValue(V.uGlobal.uFileData!ProfitCnter,V.Local.sRet(1).Trim)
+
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Next(V.Local.iFor)
+
+Program.Sub.addlData.End
+
+Program.Sub.createXLS.Start
+
+V.Local.sRet.Declare(String)
+V.Local.sFile.Declare(String)
+V.Local.bExcelPresent.Declare(Boolean)
+
+' per Michael Menez:
+' The proposed filename should be "YYYY-MM-DD-GLORIA2 Check Run" (where YYYY-MM-DD is the run date) and the user should be able to select the file destination.
+F.Intrinsic.String.Format(V.Ambient.Date,"YYYY-MM-DD",V.Local.sRet)
+F.Intrinsic.String.Concat(V.Local.sRet,"-GLORIA2 Check Run.xls",V.Local.sFile)
+F.Intrinsic.UI.ShowSaveFileDialog(V.Local.sFile,"*.xls",V.Local.sFile)
+
+f.Intrinsic.Variable.UDTToString(v.uGlobal.uFileData,"VendNo*!*InvNo*!*InvDte*!*Message*!*Account*!*ProfitCnter*!*ExpCntr*!*InternalOrd*!*ExpAmt","$!$","*!*",v.Local.sRet)
+
+' add column headings
+F.Intrinsic.String.Concat("Vendor #*!*Invoice Number*!* Invoice Date*!*Remit Message*!*Expense Account*!*ProfitCenter*!*Exp Center*!*Internal Order*!*Expense Amount$!$",V.Local.sRet,V.Local.sRet)
+
+F.Automation.MSExcel.CheckPresence(V.Local.bExcelPresent)
+F.Intrinsic.Control.If(V.Local.bExcelPresent,=,True)
+	F.Automation.MSExcel.WriteSpreadsheet(V.Local.sFile,V.Local.sRet)
+F.Intrinsic.Control.Else
+	F.Automation.OOCalc.WriteSpreadsheet(V.Local.sFile,True,V.Local.sRet)
+F.Intrinsic.Control.EndIf
+
+
+Program.Sub.createXLS.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_AP_Check_Output$}$JCT$}$9/20/2013$}$False
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$For Siemens, per Quote 4978
+At the end of the standard Check Run process (Select invoice for payment, Prepare Check Proofing, Checks and Registers), a file named CKmmdd##.txt is created, in the Global\Files directory (where mmdd is the month and day, and ## is a sequential counter).
+
+We will add a new step (custom Hook and Menu Item) to the Check Run Process, with a new menu item, titled
+"AP Upload". From this new menu item, a GAB script will read the highest sequence CKmmdd##.txt file, for the current date, to get information from the most recent check run, for the day. The script will put the information from that file, into an xls file, with the following columns (in this order):
+Vendor #, Invoice#, Invoice Date, Remit Message, Expense Account, Profit Center, Exp Center, Internal Order, Expense Amount.
+
+
+Program.Sub.Comments.End
+
